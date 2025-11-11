@@ -1,0 +1,8 @@
+GameProject {
+ ID "ChungusCore"
+ GUID "66D6340C1D565C98"
+ TITLE "Chungus Core"
+ Dependencies {
+  "58D0FB3206B6F859"
+ }
+}
