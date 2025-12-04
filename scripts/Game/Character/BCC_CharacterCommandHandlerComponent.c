@@ -90,7 +90,8 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		
 		if (m_CMD_BC_WeaponRackBolt == -1)
 			return;
-
+		
+		// Rack bolt commands sent here
 		m_CharacterAnimComp.CallCommand(m_CMD_BC_WeaponRackBolt, 0, 0.0);
 		boltAnimComp.RackBolt();
 	}
@@ -118,21 +119,26 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		if (!currentWeapon) 
 			return;
 		
-		BCC_BoltAnimationComponent boltAnimComp = BCC_BoltAnimationComponent.Cast(currentWeapon.FindComponent(BCC_BoltAnimationComponent));
+		BCC_BoltAnimationComponent boltAnimComp = BCC_Utils.GetBoltAnimCompFromWeaponEnt(currentWeapon);
 		if (!boltAnimComp)
 			return;
 		
-		BoltActionReloadCommandHandler(currentWeapon);
+		BoltActionReloadCommandHandler(currentWeapon, boltAnimComp);
 	}
 	
-	protected void BoltActionReloadCommandHandler(IEntity currentWeapon) {
+	protected void BoltActionReloadCommandHandler(IEntity weaponEnt, BCC_BoltAnimationComponent boltAnimComp) {
 		array<IEntity> magazines = {};
-		GetCompatibleMagazines(currentWeapon, magazines);
-				
+		GetCompatibleMagazines(weaponEnt, magazines);
+		
+		if (ShouldRackBolt(weaponEnt)) {
+			SendRackBolt(boltAnimComp);
+			return;
+		}
+		
 		bool reloadType = false;
-		bool isWeaponChambered = BCC_Utils.IsWeaponEntChambered(currentWeapon);
-		int maxAmmoCount = BCC_Utils.GetMaxAmmoCountFromWeaponEnt(currentWeapon);
-		int currAmmoCount = BCC_Utils.GetAmmoCountFromWeaponEnt(currentWeapon);
+		bool isWeaponChambered = BCC_Utils.IsWeaponEntChambered(weaponEnt);
+		int maxAmmoCount = BCC_Utils.GetMaxAmmoCountFromWeaponEnt(weaponEnt);
+		int currAmmoCount = BCC_Utils.GetAmmoCountFromWeaponEnt(weaponEnt);
 		int ammoCountToLoad = maxAmmoCount - currAmmoCount - isWeaponChambered;
 
 		if (ammoCountToLoad > 0 && isWeaponChambered)
@@ -143,14 +149,13 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 			MagazineComponent magComp = MagazineComponent.Cast(nextMag.FindComponent(MagazineComponent));
 			if (magComp)
 				ammoCountToLoad = Math.Min(ammoCountToLoad, magComp.GetAmmoCount());
-				reloadType = GetBoltActionReloadType(currentWeapon, magComp.GetAmmoCount(), ammoCountToLoad);
+				reloadType = GetBoltActionReloadType(weaponEnt, magComp.GetAmmoCount(), ammoCountToLoad);
 		}		
 		
-		SendBoltActionReloadCommand_BCC(ammoCountToLoad, reloadType);
-		SendMagazineToLoad_BCC(nextMag, ammoCountToLoad, reloadType);
+		SendBoltActionReloadCommand_BCC(nextMag, ammoCountToLoad, reloadType);
 	}
 	
-	protected void SendBoltActionReloadCommand_BCC(int ammoCountToLoad, bool isStripperClipReload = false) {
+	protected void SendBoltActionReloadCommand_BCC(IEntity nextMagEnt, int ammoCountToLoad, bool isStripperClipReload = false) {
 		
 		IEntity weaponEnt = m_WeaponManager.GetCurrentWeapon().GetOwner();
 		if (!weaponEnt)
@@ -160,21 +165,17 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		if (!boltAnimComp)
 			return;		
 		
-		if (ShouldRackBolt(weaponEnt)) {
-			SendRackBolt(boltAnimComp);
-			return;
-		}
-		
 		if(BCC_Utils.IsWeaponInternalMagBroken(weaponEnt))
 			ammoCountToLoad = -1;
 		
 		if (ammoCountToLoad < 1 && ammoCountToLoad != -1) // -1 explicitly means current mag is null
 			return;
 		
+		// Commands and replicated variables are sent here
+		SendMagazineToLoad_BCC(nextMagEnt, ammoCountToLoad, isStripperClipReload);
 		m_CharacterAnimComp.SetVariableInt(m_BC_BoltActionReloadAmmoCount, ammoCountToLoad);
 		m_CharacterAnimComp.SetVariableBool(m_BC_IsStripperClipReload, isStripperClipReload);
 		m_CharacterAnimComp.CallCommand(m_CMD_BC_BoltActionReload, ammoCountToLoad, 0.0);
-		
 		boltAnimComp.SendBoltActionReloadCommand(ammoCountToLoad, isStripperClipReload);
 	}
 	
@@ -271,9 +272,6 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		predicate.magWellType = magWell.Type();
 		invManager.FindItems(magazines, predicate);
 	}
-	
-
-	
 
 	/********************************* Generic helpers ************************************/
 	
@@ -311,8 +309,6 @@ class BCC_StripperClipMagazinePredicate : InventorySearchPredicate
 {
 	typename magWellType;
 	
-	//------------------------------------------------------------------------------------------------
-	// constructor
 	void BCC_StripperClipMagazinePredicate()
 	{
 		QueryComponentTypes.Insert(BaseMagazineComponent);
@@ -320,9 +316,7 @@ class BCC_StripperClipMagazinePredicate : InventorySearchPredicate
 	
 	//------------------------------------------------------------------------------------------------
 	override protected bool IsMatch(BaseInventoryStorageComponent storage, IEntity item, array<GenericComponent> queriedComponents, array<BaseItemAttributeData> queriedAttributes)
-	{
-		// Exclude magazines that are in weapon storage (already loaded in a weapon)
-		
+	{		
 		BaseMagazineComponent iMag = BaseMagazineComponent.Cast(queriedComponents[0]);
 		if (!iMag)
 			return false;
