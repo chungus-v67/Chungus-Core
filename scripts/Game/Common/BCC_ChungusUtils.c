@@ -22,6 +22,7 @@ class BCC_Utils {
 		BaseMagazineComponent magComp = BaseMagazineComponent.Cast(magEnt.FindComponent(BaseMagazineComponent));
 		if (!magComp)
 			return -1;
+	
 		return magComp.GetMaxAmmoCount();
 	}
 	
@@ -29,8 +30,9 @@ class BCC_Utils {
 		if (!weaponEnt)
 			return -1;
 		MagazineComponent magComp = GetMagCompFromWeaponEnt(weaponEnt);
-		if (!magComp)
-			return -1;
+		if (!magComp){
+			return 0;
+		}
 		return magComp.GetMaxAmmoCount();
 	}
 	
@@ -39,7 +41,7 @@ class BCC_Utils {
 			return -1;
 		MagazineComponent magComp = GetMagCompFromWeaponEnt(weaponEnt);
 		if (!magComp)
-			return -1;
+			return 0;
 		return magComp.GetAmmoCount();
 	}
 	
@@ -50,10 +52,86 @@ class BCC_Utils {
 		return MagazineComponent.Cast(weaponComp.GetCurrentMagazine());
 	}
 	
+	static InventoryMagazineComponent GetMagInvCompFromMagEnt(IEntity magEnt) {
+		if (!magEnt)
+			return null;
+		return InventoryMagazineComponent.Cast(magEnt.FindComponent(InventoryMagazineComponent));
+	}
+
+	static BCC_StripperClipInventoryMagazineComponent GetMagStripperClipInvCompFromMagEnt(IEntity magEnt) {
+		if (!magEnt)
+			return null;
+		return BCC_StripperClipInventoryMagazineComponent.Cast(magEnt.FindComponent(BCC_StripperClipInventoryMagazineComponent));
+	}
+	
+	/********************************* Ownership ************************************/
+	
+	static bool IsAuthority(IEntity ent) {
+		if (!ent)
+			return false;
+	
+	    RplComponent rplComponent = RplComponent.Cast(ent.FindComponent(RplComponent));
+		if (!rplComponent) {
+			Print("[BCC] Called without RPLComponent!", LogLevel.ERROR);
+			return false;
+		}
+		PrintFormat("Is Authority? %1", rplComponent.Role() == RplRole.Authority);
+	    return (rplComponent && rplComponent.Role() == RplRole.Authority);
+	}
+	
+	static bool IsOwner(IEntity ent) {
+		if (!ent)
+			return false;
+	
+	    RplComponent rplComponent = RplComponent.Cast(ent.FindComponent(RplComponent));
+		if (!rplComponent) {
+			Print("[BCC] Called without RPLComponent!", LogLevel.ERROR);
+			return false;
+		}
+		PrintFormat("Is Owner? %1", rplComponent.IsOwner());
+	    return (rplComponent && rplComponent.IsOwner());
+	}
+	
+		static bool IsOwnerProxy(IEntity ent) {
+		if (!ent)
+			return false;
+	
+	    RplComponent rplComponent = RplComponent.Cast(ent.FindComponent(RplComponent));
+		if (!rplComponent) {
+			Print("[BCC] Called without RPLComponent!", LogLevel.ERROR);
+			return false;
+		}
+		PrintFormat("Is OwnerProxy? %1", rplComponent.IsOwnerProxy());
+	    return (rplComponent && rplComponent.IsOwnerProxy());
+	}
 	
 	
+	static bool IsMaster(IEntity ent) {
+		if (!ent)
+			return false;
 	
+	    RplComponent rplComponent = RplComponent.Cast(ent.FindComponent(RplComponent));
+		if (!rplComponent) {
+			Print("[BCC] Called without RPLComponent!", LogLevel.ERROR);
+			return false;
+		}
+		PrintFormat("Is Master? %1", rplComponent.IsMaster());
+	    return (rplComponent && rplComponent.IsMaster());
+	}
 	
+	static void DebugOwnership(IEntity ent) {
+		if (!ent)
+			return;
+	
+	    RplComponent rplComponent = RplComponent.Cast(ent.FindComponent(RplComponent));
+		if (!rplComponent) {
+			Print("[BCC] Called without RPLComponent! Cannot debug.");
+			return;
+		}
+		PrintFormat("Is Owner? %1", rplComponent.IsOwner());
+		PrintFormat("Is Authority? %1", rplComponent.Role() == RplRole.Authority);
+		PrintFormat("Is Master? %1", rplComponent.IsMaster());
+	}
 	
 	/********************************* Weapons ************************************/
 	
@@ -98,11 +176,13 @@ class BCC_Utils {
 		
 		return false;
 	}
-	
+
 	static bool IsWeaponEntChambered(IEntity weaponEnt) {
 		MuzzleComponent muzzleComp = BCC_Utils.GetMuzzleCompFromWeaponEnt(weaponEnt);
-		if (!muzzleComp)
+		if (!muzzleComp){
+			Print("[BCC] no muzzle comp found!", LogLevel.ERROR);
 			return false;
+		}
 		return muzzleComp.IsCurrentBarrelChambered();
 	}
 	
@@ -127,9 +207,11 @@ class BCC_Utils {
 	static BCC_StripperClipMagazineAnimationComponent GetStripperClipAnimCompFromMagEnt(IEntity magEnt) {
 		return BCC_StripperClipMagazineAnimationComponent.Cast(magEnt.FindComponent(BCC_StripperClipMagazineAnimationComponent));
 	}
-	
-	
-
 }
 
  
+
+
+
+
+

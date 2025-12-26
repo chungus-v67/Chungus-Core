@@ -15,11 +15,16 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	
 	[Attribute("true", UIWidgets.CheckBox, "Should clicking on an empty chamber trigger the rack bolt animation?")]
 	protected bool m_bClickToRack;
+	
+	[Attribute("true", UIWidgets.CheckBox, "Should weapon reload be interruptable by firing or jumping?")]
+	protected bool m_bInterruptReload;
+	
+	[Attribute("true", UIWidgets.CheckBox, "Eject live round when bolt is opened on a loaded chamber")]
+	protected bool m_bEjectLiveRounds;
 
 	protected AnimationEventID m_Weapon_TriggerPulled = -1;
 	protected AnimationEventID m_BC_BoltActionAdjustAmmoCount = -1;
 	protected AnimationEventID m_BC_BoltActionEjectRound = -1;
-	protected AnimationEventID m_emptyMagAfterReloadCheck = -1;
 	protected AnimationEventID m_BC_TransitionLock	 = -1;
 	protected AnimationEventID m_Weapon_Rack_Bolt = -1;
 	protected AnimationEventID m_BC_InsertRound0 = -1;
@@ -28,9 +33,11 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	protected AnimationEventID m_BC_InsertRound3 = -1;
 	protected AnimationEventID m_BC_InsertRound4 = -1;
 	protected AnimationEventID m_BC_EjectSound = -1;
+	protected AnimationEventID m_BC_ResetMagazine = -1;
 
 	protected TAnimGraphVariable m_BC_BoltActionReloadAmmoCount = -1;
-	protected TAnimGraphVariable m_BC_IsStripperClipReload = -1;;;
+	protected TAnimGraphVariable m_BC_IsStripperClipReload = -1;
+	protected TAnimGraphVariable m_BC_InterruptReload = -1;
 	
 	protected TAnimGraphCommand m_CMD_BC_BoltActionReload = -1;
 	protected TAnimGraphCommand m_CMD_BC_TransitionUnlock = -1;
@@ -51,13 +58,13 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 
 		m_BC_BoltActionReloadAmmoCount 		= BindIntVariable("BC_BoltActionReloadAmmoCount");
 		m_BC_IsStripperClipReload 			= BindBoolVariable("BC_IsStripperClipReload");
+		m_BC_InterruptReload 				= BindBoolVariable("BC_InterruptReload");
 
 		m_Weapon_TriggerPulled 				= GameAnimationUtils.RegisterAnimationEvent("Weapon_TriggerPulled");
 		m_Weapon_Rack_Bolt 					= GameAnimationUtils.RegisterAnimationEvent("Weapon_Rack_Bolt");
 		
 		m_BC_BoltActionAdjustAmmoCount 		= GameAnimationUtils.RegisterAnimationEvent("BC_BoltActionAdjustAmmoCount");
 		m_BC_BoltActionEjectRound 			= GameAnimationUtils.RegisterAnimationEvent("BC_BoltActionEjectRound");
-		m_emptyMagAfterReloadCheck 			= GameAnimationUtils.RegisterAnimationEvent("BoltActionEmptyMagAfterReloadCheck");
 		m_BC_TransitionLock					= GameAnimationUtils.RegisterAnimationEvent("BC_TransitionLock");
 		
 		m_BC_InsertRound0 					= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound0");
@@ -66,7 +73,10 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 		m_BC_InsertRound3 					= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound3");
 		m_BC_InsertRound4 					= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound4");
 		m_BC_EjectSound 					= GameAnimationUtils.RegisterAnimationEvent("BC_EjectSound");
+		m_BC_ResetMagazine					= GameAnimationUtils.RegisterAnimationEvent("BC_ResetMagazine");
+
 		UpdateHud();
+		
 	}
 
 	override event void OnAnimationEvent(AnimationEventID animEventType, AnimationEventID animUserString, int intParam, float timeFromStart, float timeToEnd) {
@@ -80,14 +90,8 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 				RackBolt();
 				GetGame().GetCallqueue().CallLater(UpdateHud, 100, false,  true, false);
 				break;
-			case m_BC_BoltActionAdjustAmmoCount:
-				FixAmmoCount();
-				break;
 			case m_BC_BoltActionEjectRound:
 				EjectRound();
-				break;
-			case m_emptyMagAfterReloadCheck:
-				// TODO
 				break;
 			case m_BC_InsertRound0:
 				InsertRound(0);
@@ -121,22 +125,31 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 			case m_BC_EjectSound:
 				PlayEjectSound(animUserString);
 				break;
+			case m_BC_ResetMagazine:
+				ResetMagazine(0);
+				break;
 		}
 	}
 	
 	/// ********************************* Commands & Variables ********************************* ///
 	
-	void SendBoltActionReloadCommand(int ammoCount, bool reloadType) {
+	void SendBoltActionReloadCommand(int ammoCount, bool reloadType, int resetInternalMag) {
 		SetBoltActionAmmoCount(ammoCount);
 		SetBoltActionReloadType(reloadType);
-		
-		if (m_CMD_BC_BoltActionReload != -1) 
-			CallCommand(m_CMD_BC_BoltActionReload, ammoCount, 0.0);
+		SetInterruptFlag(false);
+		if (m_CMD_BC_BoltActionReload != -1) {
+			CallCommand(m_CMD_BC_BoltActionReload, resetInternalMag, 0.0);
+		}
+	}
+	
+	int GetRackBoltCMD(){
+		return m_CMD_BC_WeaponRackBolt;
 	}
 	
 	void RackBolt() {
-		if (m_CMD_BC_WeaponRackBolt != -1) 
+		if (m_CMD_BC_WeaponRackBolt != -1)  {
 			CallCommand(m_CMD_BC_WeaponRackBolt, 1, 0.0);
+		}
 	}
 	
 	void SetBoltActionReloadType(bool isStripperClipReload) {
@@ -152,9 +165,32 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 		if (m_BC_BoltActionReloadAmmoCount)
 			SetIntVariable(m_BC_BoltActionReloadAmmoCount, ammoCount);
 	}
-
 	
+	/// ********************************* Interrupt ******************************** ///
+	void SetInterruptFlag(bool value) {
+		if (m_BC_InterruptReload != -1)
+			SetBoolVariable(m_BC_InterruptReload, value);
+	}
+	/// ********************************* Reset Mag ******************************** ///
+	protected void ResetMagazine(int retryCount) {
+		MagazineComponent magComp = GetMagComp();
+		if (!magComp) {
+			if (retryCount < 3) {
+				Print("Retrying", retryCount);
+				GetGame().GetCallqueue().CallLater(ResetMagazine, retryCount * 100 + 100, false, retryCount++);
+			}
+			return;
+		}
+		
+	    if (IsAuthority())
+	        magComp.SetAmmoCount(0);
+		Print("Reset Magazine");
+		Print(GetMagComp());
+	}
+	
+
 	/// ********************************* Locking ********************************* ///
+	
 	protected void LockTransition(int bulletIdx) {
 		isTransitionLocked = true;
 		bulletIdx++;
@@ -196,24 +232,12 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 		if (!magComp)
 			return;
 		int ammoCount = magComp.GetAmmoCount();
-		
+		Print(ammoCount);
 			
-	    RplComponent rplComponent = RplComponent.Cast(m_Owner.FindComponent(RplComponent));
+		
 	    if (IsAuthority() && bulletIdx < m_boltActionReloadRoundCount)
 	        magComp.SetAmmoCount(ammoCount + 1);
 		
-	}
-	
-	private void FixAmmoCount() {
-		MagazineComponent magComp = GetMagComp();
-		if (!magComp)
-			return;
-
-		if (wasMagEmptyAfterReload) {
-			SetAmmoCount(magComp, 0);
-			wasMagEmptyAfterReload = false;
-			UpdateHud();
-		}
 	}
 	
 	private void EjectRound() {
@@ -234,6 +258,8 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 		spawnParams.Transform[3] = mat[3];
 		
 		if (IsWeaponChambered()) {
+			if (!m_bEjectLiveRounds)
+				return;
 			ClearCurrentChamber();
 			ParticleEffectEntity.SpawnParticleEffect(m_sBulletEjectionAnimation, spawnParams);
 		} else{
@@ -289,6 +315,14 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	
 	bool IsClickToRackEnabled() {
 		return m_bClickToRack;
+	}
+	
+	bool IsReloadInterruptEnabled() {
+		return m_bInterruptReload;
+	}
+	
+	bool IsEjectLiveRoundEnabled() {
+		return m_bEjectLiveRounds;
 	}
 	
 	bool DoesWeaponAcceptStripperClips() {

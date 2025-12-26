@@ -17,8 +17,13 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 	protected float m_fStripperEjectForce;
 	
 	protected IEntity m_Owner;
-	protected int m_ammoReloadCount = -1;
+	protected int m_ammoCountToReload = -1;
+	protected int m_ammoCountAtReloadStart = -1;
+	protected int m_ammoLoadedSoFar = -1;
+	protected int m_ammoRemainingInHand = -1;
+	
 	protected bool m_reloadType = 0;
+	protected bool wasReloadInterrupted = false;
 	
 	protected AnimationEventID m_BC_InsertRound0 = -1;
 	protected AnimationEventID m_BC_InsertRound1 = -1;
@@ -32,6 +37,8 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 	protected TAnimGraphVariable m_BC_ReturnToIdle = -1;
 	protected TAnimGraphVariable m_BC_IsStripperClipReload = -1;
 	
+	
+	
 	void BCC_StripperClipMagazineAnimationComponent(IEntityComponentSource src, IEntity ent, IEntity parent) {
 		m_Owner = ent;
 		m_CMD_BC_BoltActionReload 		= BindCommand("CMD_BC_BoltActionReload");
@@ -43,6 +50,7 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		m_BC_InsertRound2 				= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound2");
 		m_BC_InsertRound3 				= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound3");
 		m_BC_InsertRound4 				= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound4");
+		
 	}
 	
 	override event void OnAnimationEvent(AnimationEventID animEventType, AnimationEventID animUserString, int intParam, float timeFromStart, float timeToEnd) {
@@ -68,30 +76,37 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 	}
 	
 	void SetReloadAmmoCount(int ammoCount){
-		m_ammoReloadCount = ammoCount;
+		m_ammoCountToReload = ammoCount;
 	}
 	
 	int GetReloadAmmoCount(){
-		return m_ammoReloadCount;
+		return m_ammoCountToReload;
 	}
 
 	protected void InsertRound(int bulletIdx) {
 		MagazineComponent magComp = GetMagComp();
 		if (!magComp)
 			return;
+		if (bulletIdx == 0) { // To init ammo count for tracking
+			m_ammoCountAtReloadStart = magComp.GetAmmoCount();
+			wasReloadInterrupted = false; // reset flag when reloading first round
+		}
+		if (wasReloadInterrupted) // No op when the reload was interrupted so more rounds aren't loaded
+			return; 
 		int ammoCount = magComp.GetAmmoCount() -1;
 					
 	    RplComponent rplComponent = RplComponent.Cast(m_Owner.FindComponent(RplComponent));
 	    if (rplComponent && rplComponent.Role() == RplRole.Authority){
 	        magComp.SetAmmoCount(ammoCount);
 		}
+		
 		int offset = GetStripperIdxOffset();
-		if (bulletIdx < m_ammoReloadCount + offset) {
+		if (bulletIdx < m_ammoCountToReload + offset) {
 			HideRoundMesh(bulletIdx);
 		}
 		
 		// Return to idle
-		if (bulletIdx == m_ammoReloadCount + offset -1) {
+		if (bulletIdx == m_ammoCountToReload + offset -1) {
 			SetBoolVariable(m_BC_ReturnToIdle, true);
 		}
 	}
@@ -114,7 +129,10 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 			return;
 
 		BCC_StripperClipImpactSoundComponent clipSound = BCC_StripperClipImpactSoundComponent.Cast(magEntity.FindComponent(BCC_StripperClipImpactSoundComponent));
-		if (clipSound) clipSound.m_HasPlayed = false;
+		if (clipSound) {
+			//clipSound.m_HasPlayed = false;
+			clipSound.isStripperClip = true;
+		} 
 
 		Physics magPhysics = magEntity.GetPhysics();
 		if (!magPhysics)
@@ -159,6 +177,68 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		vector impulse = ejectDirection * magPhysics.GetMass() * m_fStripperEjectForce;
 		magPhysics.ApplyImpulseAt(worldEjectPoint, impulse);
 		magPhysics.SetAngularVelocity("0 0 6");		
+	} 
+	
+	// TODO: Add Replication
+	void DropRounds(int roundsToDrop) {   
+		if (!m_Owner)
+			return;
+
+		IEntity weapon = m_Owner.GetParent();
+		if (!weapon)
+			return;
+
+		MagazineComponent magComponent = GetMagComp();
+		if (!magComponent)
+			return;
+
+		IEntity magEntity = magComponent.GetOwner();
+		if (!magEntity)
+			return;
+		
+		BCC_StripperClipImpactSoundComponent clipSound = BCC_StripperClipImpactSoundComponent.Cast(magEntity.FindComponent(BCC_StripperClipImpactSoundComponent));
+		if (clipSound) {
+			//clipSound.m_HasPlayed = false;
+			clipSound.isStripperClip = false;
+			clipSound.roundsToDrop = roundsToDrop;
+		} 
+
+		Physics magPhysics = magEntity.GetPhysics();
+		if (!magPhysics)
+			return;
+
+		IEntity magParent = magEntity.GetParent();
+		if (magParent)
+			magParent.RemoveChild(magEntity, true);
+
+		vector magTransform[4];
+		magEntity.GetTransform(magTransform);
+
+		vector worldEjectPoint = magTransform[3];
+
+		magPhysics.ChangeSimulationState(SimulationState.SIMULATION);
+		magPhysics.SetInteractionLayer(EPhysicsLayerPresets.Debris);
+		magPhysics.EnableGravity(true);
+
+		vector weaponVelocity = vector.Zero;
+		Physics weaponPhysics = weapon.GetPhysics();
+		if (weaponPhysics)
+			weaponVelocity = weaponPhysics.GetVelocity();
+		magPhysics.SetVelocity(weaponVelocity);
+
+		vector impulse = vector.Zero;
+		impulse[0] = -0.2;
+		impulse[1] = 0.7; // small nudge
+		magPhysics.ApplyImpulseAt(worldEjectPoint, impulse);
+		
+		wasReloadInterrupted = true; // Set interrupt to prevent more rounds from being loaded
+		
+		// Handle ammo count
+		RplComponent rplComponent = RplComponent.Cast(m_Owner.FindComponent(RplComponent));
+	    if (rplComponent && rplComponent.Role() == RplRole.Authority){
+	        magComponent.SetAmmoCount(m_ammoCountAtReloadStart - m_ammoCountToReload);
+		}
+		
 	} 
 
 	protected void HideRoundMesh(int bulletIdx) {
@@ -217,14 +297,14 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		MagazineComponent magComp = GetMagComp();
 		if (!magComp)
 			return 0;
-		return magComp.GetMaxAmmoCount() - m_ammoReloadCount;
+		return magComp.GetMaxAmmoCount() - m_ammoCountToReload;
 	}
 	
 	void SetBulletVisibility() {		
 		if (!m_Owner)
 			return;
 		
-		if (!m_ammoReloadCount)
+		if (!m_ammoCountToReload)
 			return;
 		
 		int offset = GetStripperIdxOffset();
@@ -239,7 +319,7 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		}
 			
 		
-		for (int i = 0; i< m_ammoReloadCount; i++) {
+		for (int i = 0; i< m_ammoCountToReload; i++) {
 			int meshIdx = -1;
 			if (i < m_aBulletMeshes.Count()) {
 				string bulletMesh = m_aBulletMeshes[i + offset];

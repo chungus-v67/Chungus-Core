@@ -9,9 +9,7 @@ modded class SCR_CharacterControllerComponent {
 	protected AnimationEventID m_BC_InsertRound3 = -1;
 	protected AnimationEventID m_BC_InsertRound4 = -1;
 	protected AnimationEventID m_BC_EjectStripperClip = -1;
-	
-	protected TAnimGraphVariable m_playerAnimStopReloading = -1;
-    protected TAnimGraphVariable m_playerAnimCloseActionFlag = -1;
+	protected AnimationEventID m_BC_DropRounds = -1;
 	
 	protected TAnimGraphCommand m_CMD_BC_TransitionUnlock = -1;
 		
@@ -19,10 +17,12 @@ modded class SCR_CharacterControllerComponent {
 	protected IEntity m_magazineToLoad = null;
 	protected bool isTransitionLocked = false;
 	protected bool m_BoltActionReloadType = false;
+	protected int m_boltActionReloadRoundCount = -1;
+	protected int m_boltActionAmmoCountLoadedSoFar = -1;
+	protected bool wasReloadInterrupted = false;
 	
     override protected void OnInit(IEntity owner) {
-        super.OnInit(owner);
-		
+		super.OnInit(owner);
 		m_Weapon_Rack_Bolt 				= GameAnimationUtils.RegisterAnimationEvent("Weapon_Rack_Bolt");
 		m_emptyMagAfterReloadCheck 		= GameAnimationUtils.RegisterAnimationEvent("BoltActionEmptyMagAfterReloadCheck");
 		m_TransitionLock 				= GameAnimationUtils.RegisterAnimationEvent("BC_TransitionLock");
@@ -33,6 +33,7 @@ modded class SCR_CharacterControllerComponent {
 		m_BC_InsertRound3 				= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound3");
 		m_BC_InsertRound4 				= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound4");
 		m_BC_EjectStripperClip 			= GameAnimationUtils.RegisterAnimationEvent("BC_EjectStripperClip");
+		m_BC_DropRounds 				= GameAnimationUtils.RegisterAnimationEvent("BC_DropRounds");
 		
 		CharacterAnimationComponent charAnimComp = GetCharAnimComp_BCC();
 		if (charAnimComp) {
@@ -43,7 +44,6 @@ modded class SCR_CharacterControllerComponent {
     override protected void OnAnimationEvent(AnimationEventID animEventType,AnimationEventID animUserString,int intParam,float timeFromStart,float timeToEnd) {
         super.OnAnimationEvent(animEventType,animUserString,intParam,timeFromStart,timeToEnd);
 		
-		
 		switch (animEventType) {
 			case m_Weapon_Rack_Bolt:
 				//PerformCleanup_BCC();
@@ -52,26 +52,63 @@ modded class SCR_CharacterControllerComponent {
 				AttachMagToHand_BCC();
 				break;	
 			case m_BC_InsertRound0:
+				InsertRound(0);
 				LockTransition(0);
 				break;
 			case m_BC_InsertRound1:
+				InsertRound(1);
 				LockTransition(1);
 				break;
 			case m_BC_InsertRound2:
+				InsertRound(2);
 				LockTransition(2);
 				break;
 			case m_BC_InsertRound3:
+				InsertRound(3);
 				LockTransition(3);
 				break;
 			case m_BC_InsertRound4:
+				InsertRound(4);
 				LockTransition(4);
 				GetGame().GetCallqueue().CallLater(ReleaseLock, 1000, false);
 				break;
 			case m_BC_EjectStripperClip:
 				EjectStripperClip();
 				break;
+			case m_BC_DropRounds:
+				//DropRounds();
+				break;
 		}					
     }
+	
+	void SetBoltActionAmmoCount(int ammoCount) {
+		m_boltActionReloadRoundCount = ammoCount;
+	}
+	
+	void SetInterruptFlag(bool value) {
+		wasReloadInterrupted = true;
+	}
+	
+	protected void InsertRound(int bulletIdx) {
+		m_boltActionAmmoCountLoadedSoFar = bulletIdx + 1; // Tracking for interrupts
+		if (wasReloadInterrupted && m_boltActionReloadRoundCount - m_boltActionAmmoCountLoadedSoFar > 0) {
+			DropRounds(m_boltActionReloadRoundCount - m_boltActionAmmoCountLoadedSoFar);
+		}
+			
+	}
+	
+	protected void DropRounds(int roundsToDrop) {
+		if (!m_magazineToLoad)
+			return;
+		
+		BCC_StripperClipMagazineAnimationComponent magAnimComp = BCC_Utils.GetStripperClipAnimCompFromMagEnt(m_magazineToLoad);
+		if (!magAnimComp)
+			return;
+		
+		magAnimComp.DropRounds(roundsToDrop);
+		GetGame().GetCallqueue().CallLater(ReturnMagToInv_BCC,2000,false);
+	}
+
 	
 	protected void EjectStripperClip() {
 		if (!m_magazineToLoad || !m_BoltActionReloadType)
@@ -93,6 +130,7 @@ modded class SCR_CharacterControllerComponent {
 	}
 	
 	void SetMagazineToLoad_BCC(IEntity magazine) {
+		wasReloadInterrupted = false;
 		if (magazine)
 			m_magazineToLoad = magazine;
 	}
@@ -118,6 +156,11 @@ modded class SCR_CharacterControllerComponent {
 			ammoCount = magAnimComp.GetReloadAmmoCount();
 			reloadType = magAnimComp.GetReloadType();
 		}
+	
+		// Hide inventory visibility while reloading
+		BCC_StripperClipInventoryMagazineComponent stripperMagInvComp = BCC_Utils.GetMagStripperClipInvCompFromMagEnt(m_magazineToLoad);
+		if (stripperMagInvComp)
+			stripperMagInvComp.SetHideStripperClipInVicinity(true);
 		
 		m_BoltActionReloadType = reloadType;
 		HideAllStripperClipMesh_BCC(m_magazineToLoad);
@@ -192,6 +235,12 @@ modded class SCR_CharacterControllerComponent {
 	/********************************* Mag to inv ************************************/
 	
 	private void ReturnMagToInv_BCC() {
+		// Allow stripper local vis
+		if(m_magazineToLoad) {
+			BCC_StripperClipInventoryMagazineComponent stripperMagInvComp = BCC_Utils.GetMagStripperClipInvCompFromMagEnt(m_magazineToLoad);
+			if (stripperMagInvComp)
+				stripperMagInvComp.SetHideStripperClipInVicinity(false);
+		}
 		Rpc(RPC_ReturnMagToInv);
 	}
 

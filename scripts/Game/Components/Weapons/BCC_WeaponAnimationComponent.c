@@ -8,7 +8,10 @@ class BCC_WeaponAnimationComponent : WeaponAnimationComponent {
 	
 	void BCC_WeaponAnimationComponent(IEntityComponentSource src, IEntity ent, IEntity parent) {
 		m_Owner = ent;
+		InitMaxAmmo();
 	}
+	
+	
 	
 	/* ************************* GENERICS ********************************/
 	protected SCR_WeaponInfo getWeaponInfoHud() {
@@ -70,6 +73,12 @@ class BCC_WeaponAnimationComponent : WeaponAnimationComponent {
 		m_sMaxAmmo = mag.GetMaxAmmoCount();
 	}
 
+	int GetMaxAmmo(){
+		if (m_sMaxAmmo == -1)
+			InitMaxAmmo();
+		return m_sMaxAmmo;
+	}
+	
 	protected WeaponComponent GetWeaponComp() {
 		if (!m_Owner)
 			return null;

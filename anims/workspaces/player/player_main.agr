@@ -20,13 +20,20 @@ AnimSrcGraph {
     MaxValue 10
     Synchronized 1
    }
+   AnimSrcGCTVarBool BC_InterruptReload {
+    DefaultValue 0
+    Synchronized 1
+   }
   }
   Commands {
    AnimSrcGCTCmd CMD_BC_WeaponRackBolt {
+	Synchronized 1
    }
    AnimSrcGCTCmd CMD_BC_BoltActionReload {
+	Synchronized 1
    }
    AnimSrcGCTCmd CMD_BC_TransitionUnlock {
+	Synchronized 1
    }
   }
  }
