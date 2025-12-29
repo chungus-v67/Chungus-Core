@@ -1,5 +1,6 @@
 modded class SCR_CharacterControllerComponent {
 	protected AnimationEventID m_Weapon_Rack_Bolt = -1;
+	protected AnimationEventID m_Weapon_TriggerPulled = -1;
 	protected AnimationEventID m_emptyMagAfterReloadCheck = -1;
 	protected AnimationEventID m_TransitionLock = -1;
 	protected AnimationEventID m_BC_SpawnStripperMagazine = -1;
@@ -12,6 +13,8 @@ modded class SCR_CharacterControllerComponent {
 	protected AnimationEventID m_BC_DropRounds = -1;
 	
 	protected TAnimGraphCommand m_CMD_BC_TransitionUnlock = -1;
+	
+	protected TAnimGraphVariable m_BC_IsCocked = -1;
 		
 	protected bool isWeaponStillReloading = false; // Used for emergency exit
 	protected IEntity m_magazineToLoad = null;
@@ -20,10 +23,12 @@ modded class SCR_CharacterControllerComponent {
 	protected int m_boltActionReloadRoundCount = -1;
 	protected int m_boltActionAmmoCountLoadedSoFar = -1;
 	protected bool wasReloadInterrupted = false;
+	protected bool isCocked = true;
 	
     override protected void OnInit(IEntity owner) {
 		super.OnInit(owner);
 		m_Weapon_Rack_Bolt 				= GameAnimationUtils.RegisterAnimationEvent("Weapon_Rack_Bolt");
+		m_Weapon_TriggerPulled 			= GameAnimationUtils.RegisterAnimationEvent("Weapon_TriggerPulled");
 		m_emptyMagAfterReloadCheck 		= GameAnimationUtils.RegisterAnimationEvent("BoltActionEmptyMagAfterReloadCheck");
 		m_TransitionLock 				= GameAnimationUtils.RegisterAnimationEvent("BC_TransitionLock");
 		m_BC_SpawnStripperMagazine 		= GameAnimationUtils.RegisterAnimationEvent("BC_SpawnStripperMagazine");
@@ -37,7 +42,8 @@ modded class SCR_CharacterControllerComponent {
 		
 		CharacterAnimationComponent charAnimComp = GetCharAnimComp_BCC();
 		if (charAnimComp) {
-			m_CMD_BC_TransitionUnlock = charAnimComp.BindCommand("CMD_BC_TransitionUnlock");
+			m_CMD_BC_TransitionUnlock 	= charAnimComp.BindCommand("CMD_BC_TransitionUnlock");
+			m_BC_IsCocked 				= charAnimComp.BindVariableBool("BC_IsCocked");
 		}
     }
 
@@ -45,8 +51,11 @@ modded class SCR_CharacterControllerComponent {
         super.OnAnimationEvent(animEventType,animUserString,intParam,timeFromStart,timeToEnd);
 		
 		switch (animEventType) {
+			case m_Weapon_TriggerPulled:
+				SetCockedState(false);
+				break;
 			case m_Weapon_Rack_Bolt:
-				//PerformCleanup_BCC();
+				SetCockedState(true);
 				break;
 			case m_BC_SpawnStripperMagazine:
 				AttachMagToHand_BCC();
@@ -78,8 +87,15 @@ modded class SCR_CharacterControllerComponent {
 			case m_BC_DropRounds:
 				//DropRounds();
 				break;
-		}					
+		}
     }
+
+	protected void SetCockedState(bool state) {
+		isCocked = state;
+		CharacterAnimationComponent charAnimComp = GetCharAnimComp_BCC();
+		if (m_BC_IsCocked != -1 && charAnimComp)	
+			charAnimComp.SetVariableBool(m_BC_IsCocked, state)
+	}
 	
 	void SetBoltActionAmmoCount(int ammoCount) {
 		m_boltActionReloadRoundCount = ammoCount;
@@ -91,10 +107,8 @@ modded class SCR_CharacterControllerComponent {
 	
 	protected void InsertRound(int bulletIdx) {
 		m_boltActionAmmoCountLoadedSoFar = bulletIdx + 1; // Tracking for interrupts
-		if (wasReloadInterrupted && m_boltActionReloadRoundCount - m_boltActionAmmoCountLoadedSoFar > 0) {
+		if (wasReloadInterrupted && m_boltActionReloadRoundCount - m_boltActionAmmoCountLoadedSoFar > 0) 
 			DropRounds(m_boltActionReloadRoundCount - m_boltActionAmmoCountLoadedSoFar);
-		}
-			
 	}
 	
 	protected void DropRounds(int roundsToDrop) {

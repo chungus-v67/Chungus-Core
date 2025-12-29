@@ -11,8 +11,6 @@ class BCC_WeaponAnimationComponent : WeaponAnimationComponent {
 		InitMaxAmmo();
 	}
 	
-	
-	
 	/* ************************* GENERICS ********************************/
 	protected SCR_WeaponInfo getWeaponInfoHud() {
 		SCR_HUDManagerComponent hudManager = SCR_HUDManagerComponent.GetHUDManager();

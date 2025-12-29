@@ -32,15 +32,16 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 	protected AnimationEventID m_BC_InsertRound4 = -1;
 	protected AnimationEventID m_BC_EjectStripperClip = -1;
 	
+	protected AnimationTagID m_BC_TagIsLoadingAmmo = -1;
+	
 	protected TAnimGraphCommand m_CMD_BC_BoltActionReload = -1;
 	
 	protected TAnimGraphVariable m_BC_ReturnToIdle = -1;
 	protected TAnimGraphVariable m_BC_IsStripperClipReload = -1;
 	
-	
-	
 	void BCC_StripperClipMagazineAnimationComponent(IEntityComponentSource src, IEntity ent, IEntity parent) {
 		m_Owner = ent;
+		m_stripEjectPoint.Init(m_Owner);
 		m_CMD_BC_BoltActionReload 		= BindCommand("CMD_BC_BoltActionReload");
 		m_BC_ReturnToIdle 				= BindBoolVariable("BC_ReturnToIdle");
 		m_BC_IsStripperClipReload 		= BindBoolVariable("BC_IsStripperClipReload");
@@ -51,6 +52,7 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		m_BC_InsertRound3 				= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound3");
 		m_BC_InsertRound4 				= GameAnimationUtils.RegisterAnimationEvent("BC_InsertRound4");
 		
+		m_BC_TagIsLoadingAmmo 			= GameAnimationUtils.RegisterAnimationTag("BC_TagIsLoadingAmmo");
 	}
 	
 	override event void OnAnimationEvent(AnimationEventID animEventType, AnimationEventID animUserString, int intParam, float timeFromStart, float timeToEnd) {
@@ -96,28 +98,33 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		int ammoCount = magComp.GetAmmoCount() -1;
 					
 	    RplComponent rplComponent = RplComponent.Cast(m_Owner.FindComponent(RplComponent));
-	    if (rplComponent && rplComponent.Role() == RplRole.Authority){
+	    if (rplComponent && rplComponent.Role() == RplRole.Authority)
 	        magComp.SetAmmoCount(ammoCount);
-		}
 		
 		int offset = GetStripperIdxOffset();
-		if (bulletIdx < m_ammoCountToReload + offset) {
+		if (bulletIdx < m_ammoCountToReload + offset) 
 			HideRoundMesh(bulletIdx);
-		}
 		
 		// Return to idle
-		if (bulletIdx == m_ammoCountToReload + offset -1) {
+		if (bulletIdx == m_ammoCountToReload + offset -1) 
 			SetBoolVariable(m_BC_ReturnToIdle, true);
-		}
 	}
 	
 	// TODO: Add Replication
 	void EjectStripperClip() {    
+		GetGame().GetCallqueue().Call(DoEjectStripperClip);
+	}
+	
+	void DoEjectStripperClip() {    
 		if (!m_Owner)
 			return;
 
-		IEntity weapon = m_Owner.GetParent();
-		if (!weapon)
+		IEntity charEnt = m_Owner.GetParent();
+		if (!charEnt)
+			return;
+		
+		Physics charPhysics = charEnt.GetPhysics();
+		if (!charPhysics)
 			return;
 
 		MagazineComponent magComponent = GetMagComp();
@@ -130,7 +137,6 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 
 		BCC_StripperClipImpactSoundComponent clipSound = BCC_StripperClipImpactSoundComponent.Cast(magEntity.FindComponent(BCC_StripperClipImpactSoundComponent));
 		if (clipSound) {
-			//clipSound.m_HasPlayed = false;
 			clipSound.isStripperClip = true;
 		} 
 
@@ -168,24 +174,29 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		magPhysics.SetInteractionLayer(EPhysicsLayerPresets.Debris);
 		magPhysics.EnableGravity(true);
 
-		vector weaponVelocity = vector.Zero;
-		Physics weaponPhysics = weapon.GetPhysics();
-		if (weaponPhysics)
-			weaponVelocity = weaponPhysics.GetVelocity();
-		magPhysics.SetVelocity(weaponVelocity);
+		magPhysics.SetVelocity(charPhysics.GetVelocity());
 
 		vector impulse = ejectDirection * magPhysics.GetMass() * m_fStripperEjectForce;
 		magPhysics.ApplyImpulseAt(worldEjectPoint, impulse);
-		magPhysics.SetAngularVelocity("0 0 6");		
+		vector angularVelocity = Vector(0, 0, Math.RandomInt(6,12));
+		magPhysics.SetAngularVelocity(angularVelocity);		
 	} 
 	
-	// TODO: Add Replication
+	// If this isn't called on the right frame, it will spawn way off
 	void DropRounds(int roundsToDrop) {   
+		GetGame().GetCallqueue().Call(DoDropRounds, roundsToDrop);
+	}
+	
+	void DoDropRounds(int roundsToDrop) {   
 		if (!m_Owner)
 			return;
 
-		IEntity weapon = m_Owner.GetParent();
-		if (!weapon)
+		IEntity charEnt = m_Owner.GetParent();
+		if (!charEnt)
+			return;
+		
+		Physics charPhysics = charEnt.GetPhysics();
+		if (!charPhysics)
 			return;
 
 		MagazineComponent magComponent = GetMagComp();
@@ -198,7 +209,6 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		
 		BCC_StripperClipImpactSoundComponent clipSound = BCC_StripperClipImpactSoundComponent.Cast(magEntity.FindComponent(BCC_StripperClipImpactSoundComponent));
 		if (clipSound) {
-			//clipSound.m_HasPlayed = false;
 			clipSound.isStripperClip = false;
 			clipSound.roundsToDrop = roundsToDrop;
 		} 
@@ -207,37 +217,40 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		if (!magPhysics)
 			return;
 
+		vector wt[4];
+		magEntity.GetWorldTransform(wt);
+		
 		IEntity magParent = magEntity.GetParent();
 		if (magParent)
-			magParent.RemoveChild(magEntity, true);
+			magParent.RemoveChild(magEntity, false);
+		
+		magEntity.SetWorldTransform(wt);
 
 		vector magTransform[4];
 		magEntity.GetTransform(magTransform);
 
-		vector worldEjectPoint = magTransform[3];
+		vector wt2[4];
+		magEntity.GetWorldTransform(wt2);
+		vector worldCOM = magPhysics.GetCenterOfMass().Multiply4(wt2);
 
 		magPhysics.ChangeSimulationState(SimulationState.SIMULATION);
 		magPhysics.SetInteractionLayer(EPhysicsLayerPresets.Debris);
 		magPhysics.EnableGravity(true);
 
-		vector weaponVelocity = vector.Zero;
-		Physics weaponPhysics = weapon.GetPhysics();
-		if (weaponPhysics)
-			weaponVelocity = weaponPhysics.GetVelocity();
-		magPhysics.SetVelocity(weaponVelocity);
+		magPhysics.SetVelocity(charPhysics.GetVelocity());
+		magPhysics.SetAngularVelocity(charPhysics.GetAngularVelocity());
 
 		vector impulse = vector.Zero;
-		impulse[0] = -0.2;
-		impulse[1] = 0.7; // small nudge
-		magPhysics.ApplyImpulseAt(worldEjectPoint, impulse);
+		impulse[0] = -0.1;
+		impulse[1] = 0.2; // small nudge
+		magPhysics.ApplyImpulseAt(worldCOM, impulse);
 		
 		wasReloadInterrupted = true; // Set interrupt to prevent more rounds from being loaded
 		
 		// Handle ammo count
 		RplComponent rplComponent = RplComponent.Cast(m_Owner.FindComponent(RplComponent));
-	    if (rplComponent && rplComponent.Role() == RplRole.Authority){
+	    if (rplComponent && rplComponent.Role() == RplRole.Authority)
 	        magComponent.SetAmmoCount(m_ammoCountAtReloadStart - m_ammoCountToReload);
-		}
 		
 	} 
 
@@ -249,7 +262,7 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		GameAnimationUtils.ShowMesh(m_Owner, meshIdx, false);
 	}
 	
-	void SetReloadType(bool reloadType){
+	void SetReloadType(bool reloadType) {
 		m_reloadType = reloadType;
 	}
 	
@@ -257,7 +270,7 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 		return m_reloadType;
 	}
 	
-	protected MagazineComponent GetMagComp(){
+	protected MagazineComponent GetMagComp() {
 		if (!m_Owner)
 			return null;
 		return MagazineComponent.Cast(m_Owner.FindComponent(MagazineComponent));
@@ -274,16 +287,14 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 	//------------------------------------------------------------------------------------------------
 	//! Server-side RPC for rack bolt command
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RPC_SendReloadCommand(bool reloadType)
-	{		
+	protected void RPC_SendReloadCommand(bool reloadType) {		
 		Rpc(RPC_DoSendReloadCommand, reloadType);
 	}
 	
 	//------------------------------------------------------------------------------------------------
 	//! Broadcast RPC for rack bolt command
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
-	protected void RPC_DoSendReloadCommand(bool reloadType)
-	{
+	protected void RPC_DoSendReloadCommand(bool reloadType) {
 		if (m_BC_IsStripperClipReload != -1)
 			SetBoolVariable(m_BC_IsStripperClipReload, reloadType);
 		
@@ -329,7 +340,6 @@ class BCC_StripperClipMagazineAnimationComponent: MagazineAnimationComponent
 				GameAnimationUtils.ShowMesh(m_Owner, meshIdx , true);				
 			}
 		}
-		
 	}
 	
 	protected InventoryMagazineComponent GetMagInvComp(){

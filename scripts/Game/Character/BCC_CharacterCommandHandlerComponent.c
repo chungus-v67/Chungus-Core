@@ -2,12 +2,15 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 {
 	protected TAnimGraphTag m_TagWeaponReload_BC = -1;
 	protected TAnimGraphTag m_TagIsPullingTrigger_BC = -1;
+	protected TAnimGraphTag m_TagFireModeChange = -1;
 	protected TAnimGraphTag m_BC_TagIsLoadingAmmo = -1;
 	protected TAnimGraphCommand m_CMD_BC_BoltActionReload = -1;
 	protected TAnimGraphCommand m_CMD_BC_WeaponRackBolt = -1;
 	protected TAnimGraphVariable m_BC_BoltActionReloadAmmoCount = -1;
 	protected TAnimGraphVariable m_BC_IsStripperClipReload = -1;
 	protected TAnimGraphVariable m_BC_InterruptReload = -1;
+	
+	protected bool blockRerack;
 	
 	
 	//------------------------------------------------------------------------------------------------
@@ -18,6 +21,7 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 			m_TagWeaponReload_BC 				= m_CharacterAnimComp.BindTag("TagWeaponReload");
 			m_TagIsPullingTrigger_BC 			= m_CharacterAnimComp.BindTag("TagIsPullingTrigger");
 			m_BC_TagIsLoadingAmmo				= m_CharacterAnimComp.BindTag("BC_TagIsLoadingAmmo");
+			m_TagFireModeChange					= m_CharacterAnimComp.BindTag("TagFireModeChange");
 			
 			m_CMD_BC_BoltActionReload 			= m_CharacterAnimComp.BindCommand("CMD_BC_BoltActionReload");
 			m_CMD_BC_WeaponRackBolt 			= m_CharacterAnimComp.BindCommand("CMD_BC_WeaponRackBolt");
@@ -52,17 +56,21 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 	protected void BoltActionRackCommandActivity(CharacterInputContext pInputCtx, float pDt, int pCurrentCommandID) {		
 		bool isPullingTrigger_BC = pInputCtx.WeaponIsPullingTrigger();
 		
-		if (!isPullingTrigger_BC)
+		if (!isPullingTrigger_BC) {
+			blockRerack = false;
 			return;
+		}
+		if (blockRerack)
+			return;
+		blockRerack = true;
 		
 		if (!m_CharacterAnimComp || !m_WeaponManager || m_TagIsPullingTrigger_BC == -1)
 			return;
-
 		
 		bool isPullingTriggerTagActive = m_CharacterAnimComp.IsPrimaryTag(m_TagIsPullingTrigger_BC) || m_CharacterAnimComp.IsSecondaryTag(m_TagIsPullingTrigger_BC);
 		
-		if (isPullingTriggerTagActive)
-			return;
+		//if (isPullingTriggerTagActive)
+		//	return;
 
 		BaseWeaponComponent currentWeapon = m_WeaponManager.GetCurrentWeapon();
 		if (!currentWeapon) 
@@ -74,6 +82,10 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 			
 		BCC_BoltAnimationComponent boltAnimComp = BCC_BoltAnimationComponent.Cast(weaponEntity.FindComponent(BCC_BoltAnimationComponent));
 		if (!boltAnimComp)
+			return;
+		
+		SCR_CharacterControllerComponent charController = GetScrCharacterControllerComponent_BCC();
+		if (!charController)
 			return;
 		
 		if (!boltAnimComp.IsClickToRackEnabled())
@@ -81,58 +93,36 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		if (boltAnimComp.IsReloadInterruptEnabled())
 			GetGame().GetInputManager().AddActionListener("CharacterFire", EActionTrigger.PRESSED, BoltActionInterruptActivity);
 
-		BoltActionRackCommandHandler(boltAnimComp, weaponEntity);
+		BoltActionRackCommandHandler(boltAnimComp, charController, weaponEntity);
 	}
 	
-	protected void BoltActionRackCommandHandler(BCC_BoltAnimationComponent boltAnimComp, IEntity weapon) {
+	protected void BoltActionRackCommandHandler(BCC_BoltAnimationComponent boltAnimComp, SCR_CharacterControllerComponent charController, IEntity weapon) {
 		if (!ShouldRackBolt(weapon))
 			return;
-		SendRackBolt(boltAnimComp);
+		SendRackBolt(boltAnimComp, charController);
 	}
 	
 	
-	protected void SendRackBolt(BCC_BoltAnimationComponent boltAnimComp) {
+	protected void SendRackBolt(BCC_BoltAnimationComponent boltAnimComp, SCR_CharacterControllerComponent charController) {
 		if (!boltAnimComp)
 			return;
 		
-		if (m_CMD_BC_WeaponRackBolt == -1){
+		if (m_CMD_BC_WeaponRackBolt == -1)
 			return;		
-		}
-		// Test
+		
 		if (!BCC_Utils.IsOwner(GetCharacter()))
 			return;
+		
 		// Rack bolt commands sent here
+		charController.ReloadWeapon();
 		m_CharacterAnimComp.CallCommand(m_CMD_BC_WeaponRackBolt, 0, 0.0);
 		boltAnimComp.CallCommand(boltAnimComp.GetRackBoltCMD(), 1, 0.0);
-		
-	}
-	
-	
-	// Remove these
-	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RPC_AskRackBolt() {
-		Rpc(RPC_DoRackBolt);
-	}
-	
-	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
-	protected void RPC_DoRackBolt()
-	{
-		BaseWeaponComponent currentWeapon = m_WeaponManager.GetCurrentWeapon();
-		if (!currentWeapon) 
-			return;
-		
-		IEntity weaponEntity = currentWeapon.GetOwner();
-		if (!weaponEntity)
-			return;
-			
-		BCC_BoltAnimationComponent boltAnimComp = BCC_BoltAnimationComponent.Cast(weaponEntity.FindComponent(BCC_BoltAnimationComponent));
-		if (!boltAnimComp)
-			return;
-		boltAnimComp.RackBolt();
 	}
 	
 	
 	protected bool ShouldRackBolt(IEntity weapon) {
+		if (!BCC_Utils.IsOwner(weapon)) // There is an issue where the authority doesn't pick up chamber status
+			return false;
 		return !BCC_Utils.IsWeaponEntChambered(weapon) && !BCC_Utils.IsWeaponEmpty(weapon);
 	}
 	
@@ -171,13 +161,13 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		GetCompatibleMagazines(weaponEnt, magazines);
 		
 		if (ShouldRackBolt(weaponEnt)) {
-			SendRackBolt(boltAnimComp);
+			SendRackBolt(boltAnimComp, charController);
 			return;
 		}
 		
 		bool reloadType = false;
 		bool isWeaponChambered = BCC_Utils.IsWeaponEntChambered(weaponEnt);
-		bool shouldResetInternalMag = BCC_Utils.IsWeaponInternalMagBroken(weaponEnt); // invert for sending -1
+		bool shouldResetInternalMag = BCC_Utils.IsWeaponInternalMagBroken(weaponEnt);
 		int maxAmmoCount = boltAnimComp.GetMaxAmmo();
 			
 		int currAmmoCount = BCC_Utils.GetAmmoCountFromWeaponEnt(weaponEnt);
@@ -190,13 +180,15 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 			ammoCountToLoad++;
 
 		IEntity nextMag = GetOptimalMagazine_BCC(magazines, maxAmmoCount, currAmmoCount, true);
-		if (nextMag) {
-			MagazineComponent magComp = MagazineComponent.Cast(nextMag.FindComponent(MagazineComponent));
-			if (magComp) {
-				ammoCountToLoad = Math.Min(ammoCountToLoad, magComp.GetAmmoCount());
-				reloadType = GetBoltActionReloadType(weaponEnt, magComp.GetAmmoCount(), ammoCountToLoad);
-			}
-		}		
+		if (!nextMag)
+			return;
+
+		MagazineComponent magComp = MagazineComponent.Cast(nextMag.FindComponent(MagazineComponent));
+		if (!magComp)
+			return;
+
+		ammoCountToLoad = Math.Min(ammoCountToLoad, magComp.GetAmmoCount());
+		reloadType = GetBoltActionReloadType(weaponEnt, boltAnimComp, magComp.GetAmmoCount(), ammoCountToLoad);
 		
 		SendBoltActionReloadCommand_BCC(charController, boltAnimComp, weaponEnt, nextMag, ammoCountToLoad, reloadType, shouldResetInternalMag);
 	}
@@ -211,7 +203,9 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		bool shouldResetInternalMag = false
 	) {
 		charController.SetBoltActionAmmoCount(ammoCountToLoad);
-		SendMagazineToLoad_BCC(nextMagEnt, ammoCountToLoad, isStripperClipReload);
+		SendMagazineToLoad_BCC(nextMagEnt, charController, ammoCountToLoad, isStripperClipReload);
+		if (!BCC_Utils.IsOwner(charController.GetOwner()))
+			return;
 		m_CharacterAnimComp.SetVariableInt(m_BC_BoltActionReloadAmmoCount, ammoCountToLoad);
 		m_CharacterAnimComp.SetVariableBool(m_BC_IsStripperClipReload, isStripperClipReload);
 		m_CharacterAnimComp.SetVariableBool(m_BC_InterruptReload, false);
@@ -220,15 +214,8 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 		boltAnimComp.SendBoltActionReloadCommand(ammoCountToLoad, isStripperClipReload, -1 *  shouldResetInternalMag);
 	}
 	
-	protected bool GetBoltActionReloadType(IEntity weaponEnt, int magAmmoCount, int ammoCountToLoad) {		
-		if (!weaponEnt)
-			return false;
-		
+	protected bool GetBoltActionReloadType(IEntity weaponEnt, BCC_BoltAnimationComponent boltAnimComp, int magAmmoCount, int ammoCountToLoad) {		
 		if(ammoCountToLoad < 3)
-			return false;
-		
-		BCC_BoltAnimationComponent boltAnimComp = BCC_Utils.GetBoltAnimCompFromWeaponEnt(weaponEnt);
-		if (!boltAnimComp)
 			return false;
 		
 		if (!boltAnimComp.DoesWeaponAcceptStripperClips())
@@ -241,9 +228,7 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 	}
 	
 	/// ********************************* Interrupt ********************************* ///
-	
 	protected void BoltActionInterruptActivity() {		
-
 		if (!m_CharacterAnimComp || !m_WeaponManager || m_BC_TagIsLoadingAmmo == -1)
 			return;
 		
@@ -288,14 +273,7 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 	
 	
 	/// ********************************* Magazine ********************************* ///
-
-	protected void SendMagazineToLoad_BCC(IEntity magazine, int ammoCountToLoad, bool reloadType){
-		if (!magazine)
-			return;
-		
-		SCR_CharacterControllerComponent charController = GetScrCharacterControllerComponent_BCC();
-		if (!charController)
-			return;
+	protected void SendMagazineToLoad_BCC(IEntity magazine, SCR_CharacterControllerComponent charController, int ammoCountToLoad, bool reloadType){
 		
 		BCC_StripperClipMagazineAnimationComponent magAnimComp = BCC_StripperClipMagazineAnimationComponent.Cast(magazine.FindComponent(BCC_StripperClipMagazineAnimationComponent));
 		if (!magAnimComp)
@@ -337,10 +315,7 @@ modded class SCR_CharacterCommandHandlerComponent : CharacterCommandHandlerCompo
 	protected void GetCompatibleMagazines(IEntity currentWeapon, out array<IEntity> magazines)
 	{
 		magazines.Clear();
-		
-		if (!currentWeapon)
-			return;
-		
+
 		BaseMuzzleComponent muzzle = BaseMuzzleComponent.Cast(currentWeapon.FindComponent(BaseMuzzleComponent));
 		if (!muzzle)
 			return;

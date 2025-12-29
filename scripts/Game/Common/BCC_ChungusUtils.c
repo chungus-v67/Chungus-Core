@@ -1,5 +1,23 @@
 class BCC_Utils {
 	
+	
+	/********************************* Character ************************************/
+	
+	static IEntity GetPrimaryWeaponEntFromCharEnt(IEntity charEnt) {
+		if (!charEnt)
+			return null;
+		
+		BaseWeaponManagerComponent weaponManager = BaseWeaponManagerComponent.Cast(charEnt.FindComponent(BaseWeaponManagerComponent));
+		if (!weaponManager)
+			return null;
+		
+		BaseWeaponComponent currentWeapon = weaponManager.GetCurrentWeapon();
+		if (!currentWeapon)
+			return null;
+		
+		return currentWeapon.GetOwner();
+	}
+
 	/********************************* Magazines ************************************/
 	static MagazineComponent GetMagCompFromMagEnt(IEntity magEnt) {
 		if (!magEnt)
@@ -92,7 +110,7 @@ class BCC_Utils {
 	    return (rplComponent && rplComponent.IsOwner());
 	}
 	
-		static bool IsOwnerProxy(IEntity ent) {
+	static bool IsOwnerProxy(IEntity ent) {
 		if (!ent)
 			return false;
 	
@@ -210,7 +228,6 @@ class BCC_Utils {
 }
 
  
-
 
 
 

@@ -24,6 +24,10 @@ AnimSrcGraph {
     DefaultValue 0
     Synchronized 1
    }
+   AnimSrcGCTVarBool BC_IsCocked {
+    DefaultValue 1
+    Synchronized 1
+   }
   }
   Commands {
    AnimSrcGCTCmd CMD_BC_WeaponRackBolt {

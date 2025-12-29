@@ -19,8 +19,15 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	[Attribute("true", UIWidgets.CheckBox, "Should weapon reload be interruptable by firing or jumping?")]
 	protected bool m_bInterruptReload;
 	
+	[Attribute("true", UIWidgets.CheckBox, "Should weapon use this custom HUD or default? Default will be missing features.")]
+	protected bool m_bUseCustomHUD;
+	
 	[Attribute("true", UIWidgets.CheckBox, "Eject live round when bolt is opened on a loaded chamber")]
 	protected bool m_bEjectLiveRounds;
+	
+	static const ref Color COLOR_WHITE = Color.FromSRGBA(230, 230, 230, 255);
+	static const ref Color COLOR_DARK = Color.FromSRGBA(0, 0, 0, 70);
+	protected ref BCC_AmmoMaskMapping m_AmmoMaskMapping = new BCC_AmmoMaskMapping();
 
 	protected AnimationEventID m_Weapon_TriggerPulled = -1;
 	protected AnimationEventID m_BC_BoltActionAdjustAmmoCount = -1;
@@ -34,10 +41,12 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	protected AnimationEventID m_BC_InsertRound4 = -1;
 	protected AnimationEventID m_BC_EjectSound = -1;
 	protected AnimationEventID m_BC_ResetMagazine = -1;
+	
 
 	protected TAnimGraphVariable m_BC_BoltActionReloadAmmoCount = -1;
 	protected TAnimGraphVariable m_BC_IsStripperClipReload = -1;
 	protected TAnimGraphVariable m_BC_InterruptReload = -1;
+	protected TAnimGraphVariable m_BC_IsCocked = -1;
 	
 	protected TAnimGraphCommand m_CMD_BC_BoltActionReload = -1;
 	protected TAnimGraphCommand m_CMD_BC_TransitionUnlock = -1;
@@ -48,6 +57,11 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	protected bool isTransitionLocked = false;
 	protected bool m_BoltActionReloadType = false;
 	protected int m_boltActionReloadRoundCount = -1;
+	protected bool shouldResetMagazine = false;
+	protected bool plusOneRound = false;
+	protected bool wasMagEmpty = false;
+	protected bool isCocked = true;
+	
 
 	void BCC_BoltAnimationComponent(IEntityComponentSource src, IEntity ent, IEntity parent) {
 		m_Owner = ent;
@@ -56,6 +70,7 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 		m_CMD_BC_BoltActionReload 			= BindCommand("CMD_BC_BoltActionReload");
 		m_CMD_BC_WeaponRackBolt 			= BindCommand("CMD_BC_WeaponRackBolt");
 
+		m_BC_IsCocked 						= BindBoolVariable("BC_IsCocked");
 		m_BC_BoltActionReloadAmmoCount 		= BindIntVariable("BC_BoltActionReloadAmmoCount");
 		m_BC_IsStripperClipReload 			= BindBoolVariable("BC_IsStripperClipReload");
 		m_BC_InterruptReload 				= BindBoolVariable("BC_InterruptReload");
@@ -76,47 +91,62 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 		m_BC_ResetMagazine					= GameAnimationUtils.RegisterAnimationEvent("BC_ResetMagazine");
 
 		UpdateHud();
-		
 	}
-
+/*	
+	override event  bool OnPrepareAnimInput(IEntity owner, float ts) { 
+		MagazineComponent magComp = GetMagComp();
+		if (magComp) {
+			Print(magComp.GetAmmoCount());
+			SetBoltActionAmmoCount(magComp.GetAmmoCount());
+		}
+		return super.OnPrepareAnimInput(owner, ts);
+		
+		 }
+*/
 	override event void OnAnimationEvent(AnimationEventID animEventType, AnimationEventID animUserString, int intParam, float timeFromStart, float timeToEnd) {
 		super.OnAnimationEvent(animEventType, animUserString, intParam, timeFromStart, timeToEnd);
 
 		switch (animEventType) {
 			case m_Weapon_TriggerPulled:
-				UpdateHud(false);
+				plusOneRound = true;
+				FixEmptyMag();
+				UpdateHud();
+				SetCockedState(false);
 				break;			
 			case m_Weapon_Rack_Bolt:
-				RackBolt();
-				GetGame().GetCallqueue().CallLater(UpdateHud, 100, false,  true, false);
+				plusOneRound = false;
+				CheckForEmptyMag();
+				SetCockedState(true);
 				break;
 			case m_BC_BoltActionEjectRound:
+				ResetMagazine(0); // MOVE THIS LATER
 				EjectRound();
+				SetCockedState(false);
 				break;
 			case m_BC_InsertRound0:
 				InsertRound(0);
+				UpdateHud();
 				LockTransition(0);
-				UpdateHud(true, true);
 				break;
 			case m_BC_InsertRound1:
 				InsertRound(1);
+				UpdateHud();
 				LockTransition(1);
-				UpdateHud(true, true);
 				break;
 			case m_BC_InsertRound2:
 				InsertRound(2);
+				UpdateHud();
 				LockTransition(2);
-				UpdateHud(true, true);
 				break;
 			case m_BC_InsertRound3:
 				InsertRound(3);
+				UpdateHud();
 				LockTransition(3);
-				UpdateHud(true, true);
 				break;
 			case m_BC_InsertRound4:
 				InsertRound(4);
+				UpdateHud();
 				LockTransition(4);
-				UpdateHud(true, true);
 				GetGame().GetCallqueue().CallLater(ReleaseLock, 1000, false); // Emergency exit
 				break;
 			case m_BC_TransitionLock:
@@ -125,15 +155,14 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 			case m_BC_EjectSound:
 				PlayEjectSound(animUserString);
 				break;
-			case m_BC_ResetMagazine:
-				ResetMagazine(0);
-				break;
 		}
 	}
 	
 	/// ********************************* Commands & Variables ********************************* ///
 	
 	void SendBoltActionReloadCommand(int ammoCount, bool reloadType, int resetInternalMag) {
+		if (resetInternalMag == -1)
+			shouldResetMagazine = true;
 		SetBoltActionAmmoCount(ammoCount);
 		SetBoltActionReloadType(reloadType);
 		SetInterruptFlag(false);
@@ -166,6 +195,39 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 			SetIntVariable(m_BC_BoltActionReloadAmmoCount, ammoCount);
 	}
 	
+	void SetCockedState(bool state) {
+		isCocked = state;
+		
+		if (m_BC_IsCocked != -1)	
+			SetBoolVariable(m_BC_IsCocked, state)
+	}
+	
+	
+	/// ********************************* Fix Mag ******************************** ///
+	protected void CheckForEmptyMag() {
+		MagazineComponent magComp = GetMagComp();
+		if (!magComp)
+			return;
+		if (!IsAuthority())
+	        return;
+		if (magComp.GetAmmoCount() == 0) {
+			magComp.SetAmmoCount(1);
+			wasMagEmpty = true;
+		}
+	}
+	
+	protected void FixEmptyMag() {
+		MagazineComponent magComp = GetMagComp();
+		if (!magComp)
+			return;
+		if (!IsAuthority())
+	        return;
+		if (wasMagEmpty){
+			magComp.SetAmmoCount(0);
+			wasMagEmpty = false;
+		} 
+	}
+	
 	/// ********************************* Interrupt ******************************** ///
 	void SetInterruptFlag(bool value) {
 		if (m_BC_InterruptReload != -1)
@@ -173,11 +235,13 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	}
 	/// ********************************* Reset Mag ******************************** ///
 	protected void ResetMagazine(int retryCount) {
+		if (!shouldResetMagazine)
+			return;
 		MagazineComponent magComp = GetMagComp();
 		if (!magComp) {
 			if (retryCount < 3) {
 				Print("Retrying", retryCount);
-				GetGame().GetCallqueue().CallLater(ResetMagazine, retryCount * 100 + 100, false, retryCount++);
+				GetGame().GetCallqueue().CallLater(ResetMagazine, retryCount * 100 + 100, false, retryCount + 1);
 			}
 			return;
 		}
@@ -186,6 +250,8 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	        magComp.SetAmmoCount(0);
 		Print("Reset Magazine");
 		Print(GetMagComp());
+		shouldResetMagazine = false;
+		
 	}
 	
 
@@ -233,7 +299,7 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 			return;
 		int ammoCount = magComp.GetAmmoCount();
 		Print(ammoCount);
-			
+			Print(GetMagComp());
 		
 	    if (IsAuthority() && bulletIdx < m_boltActionReloadRoundCount)
 	        magComp.SetAmmoCount(ammoCount + 1);
@@ -285,31 +351,46 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	}
 
 	/// ********************************* HUD ********************************* ///
-
-	private void UpdateHud(bool shouldUpdateAmmoCount = true, bool plusOneRound = false) {
+	void UpdateHud() {
+		InitMaxAmmo(); // putting this here to init
+		
 		if (!IsLocalPlayer())
 			return;
-
+		
+		if (!IsCustomHUDEnabled())
+			return;
+	
 		SCR_WeaponInfo weaponInfoHud = getWeaponInfoHud();
 		if (!weaponInfoHud)
 			return;
 
-		int currentAmmoCount = GetCurrentAmmoCount() + plusOneRound;
+		weaponInfoHud.m_Widgets.m_wMagazineGlow.SetOpacity(0.0); 
+		weaponInfoHud.m_Widgets.m_wMagazineBackground.SetOpacity(1.0); 
+		weaponInfoHud.m_Widgets.m_wMagazineOutline.SetOpacity(0.0); 
+		weaponInfoHud.m_Widgets.m_wMagazineProgress.SetOpacity(1.0); 	
+		weaponInfoHud.m_Widgets.m_wFiremodeGlow.SetOpacity(0.0); 
+		
+		
+		float width, height;
+		weaponInfoHud.m_Widgets.m_wMagazineBackground.GetScreenSize(width, height);
+		WorkspaceWidget workspace = GetGame().GetWorkspace();
+		float widthUnscaled = workspace.DPIUnscale(width);
+		float heightUnscaled = workspace.DPIUnscale(height);
+		weaponInfoHud.m_Widgets.m_wFiremodeIcon.SetSize(widthUnscaled * 0.9, heightUnscaled * 0.9);
+		
+		int currentAmmoCount = GetCurrentAmmoCount() - wasMagEmpty;
+		Print(GetCurrentAmmoCount());
 
 		if (IsWeaponChambered()) {
-			weaponInfoHud.m_Widgets.m_wFiremodeIcon.SetOpacity(1.0);
-			weaponInfoHud.m_Widgets.m_wMagazineOutline.SetOpacity(1.0);
+			weaponInfoHud.m_Widgets.m_wFiremodeIcon.SetColor(COLOR_WHITE);
 		} else {
-			weaponInfoHud.m_Widgets.m_wFiremodeIcon.SetOpacity(weaponInfoHud.FADED_OPACITY);
-			currentAmmoCount -= 1;
+			weaponInfoHud.m_Widgets.m_wFiremodeIcon.SetColor(COLOR_DARK);
 		}
-
-		if (shouldUpdateAmmoCount) {
-			if (m_sMaxAmmo == -1)
-				InitMaxAmmo();
-
-			weaponInfoHud.m_Widgets.m_wMagazineProgress.SetMaskProgress(currentAmmoCount / m_sMaxAmmo);
-		}
+		float maskProgress = m_AmmoMaskMapping.GetMaskProgress(currentAmmoCount);
+		weaponInfoHud.m_Widgets.m_wMagazineProgress.SetMaskProgress(maskProgress); 
+		
+		
+		
 	}
 	/// ********************************* Getters & Helpers ********************************* ///
 	
@@ -324,6 +405,10 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	bool IsEjectLiveRoundEnabled() {
 		return m_bEjectLiveRounds;
 	}
+		
+	bool IsCustomHUDEnabled() {
+		return m_bUseCustomHUD;
+	}
 	
 	bool DoesWeaponAcceptStripperClips() {
 		return m_bAcceptsStripperClips;
@@ -332,5 +417,22 @@ class BCC_BoltAnimationComponent : BCC_WeaponAnimationComponent {
 	protected int GetBoltActionAmmoCount() {
 		return m_boltActionReloadRoundCount;
 	}
+}
+
+class BCC_AmmoMaskMapping
+{
+    protected ref array<float> m_MaskValues;
+    
+    void BCC_AmmoMaskMapping()
+    {
+        m_MaskValues = {0.0, 0.6, 0.7, 0.8, 0.9, 1.0};
+    }
+    
+    float GetMaskProgress(int ammoCount)
+    {
+        if (ammoCount >= 0 && ammoCount < m_MaskValues.Count())
+            return m_MaskValues[ammoCount];
+        return 0.0; 
+    }
 }
 		
